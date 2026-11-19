@@ -56,7 +56,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -105,9 +109,10 @@ fun RunScreen() {
     var elapsedSec by remember { mutableLongStateOf(0L) }
 
     val prefs = remember { context.getSharedPreferences("runpace", Context.MODE_PRIVATE) }
-    var fastText by remember { mutableStateOf(prefs.getString("fast", "5:20") ?: "5:20") }
-    var slowText by remember { mutableStateOf(prefs.getString("slow", "5:40") ?: "5:40") }
-    val range = Pace.range(Pace.parseDuration(fastText), Pace.parseDuration(slowText))
+    // Chiffres seuls ("520"), affichés "5:20".
+    var fastText by remember { mutableStateOf(digitsOnly(prefs.getString("fast", "520"))) }
+    var slowText by remember { mutableStateOf(digitsOnly(prefs.getString("slow", "540"))) }
+    val range = Pace.range(Pace.parseDigits(fastText), Pace.parseDigits(slowText))
 
     LaunchedEffect(fastText, slowText) {
         RunState.range = range
@@ -374,7 +379,7 @@ private fun RangeCard(
                 PaceField(slowText, onSlow, "À", Modifier.weight(1f))
             }
             Text(
-                if (valid) "En min/km, par exemple 5:20 → 5:40" else "Format attendu : 5:20",
+                if (valid) "En min/km : tapez 520 pour 5:20" else "Tapez par exemple 520 pour 5:20",
                 color = if (valid) TextDim else Red,
                 fontSize = 13.sp
             )
@@ -382,14 +387,51 @@ private fun RangeCard(
     }
 }
 
+private fun digitsOnly(text: String?): String = (text ?: "").filter { it.isDigit() }.take(6)
+
+/** Affiche "530" comme "5:30" et "10530" comme "1:05:30" (deux points tous les 2 chiffres). */
+private object ColonTransformation : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        val d = text.text
+        val colons = if (d.length >= 3) (d.length - 1) / 2 else 0
+        // Positions (dans la saisie) avant lesquelles on insère ":".
+        val cuts = (1..colons).map { d.length - 2 * it }.sorted()
+        val out = StringBuilder()
+        d.forEachIndexed { i, c ->
+            if (i in cuts) out.append(':')
+            out.append(c)
+        }
+        val mapping = object : OffsetMapping {
+            override fun originalToTransformed(offset: Int): Int =
+                offset + cuts.count { it < offset }
+
+            override fun transformedToOriginal(offset: Int): Int {
+                var o = offset
+                cuts.forEachIndexed { k, cut -> if (offset > cut + k) o-- }
+                return o.coerceIn(0, d.length)
+            }
+        }
+        return TransformedText(AnnotatedString(out.toString()), mapping)
+    }
+}
+
 @Composable
-private fun PaceField(value: String, onChange: (String) -> Unit, label: String, modifier: Modifier) {
+private fun PaceField(
+    value: String,
+    onChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier,
+    decimal: Boolean = false
+) {
     OutlinedTextField(
         value = value,
-        onValueChange = onChange,
+        onValueChange = { onChange(if (decimal) it else digitsOnly(it)) },
         label = { Text(label) },
         singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+        visualTransformation = if (decimal) VisualTransformation.None else ColonTransformation,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = if (decimal) KeyboardType.Decimal else KeyboardType.NumberPassword
+        ),
         textStyle = MaterialTheme.typography.titleLarge.copy(
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center
@@ -429,10 +471,10 @@ private fun MainButton(running: Boolean, enabled: Boolean, onClick: () -> Unit) 
 fun CalculatorCard() {
     var open by remember { mutableStateOf(false) }
     var distanceText by remember { mutableStateOf("10") }
-    var timeText by remember { mutableStateOf("50:00") }
+    var timeText by remember { mutableStateOf("5000") }
 
     val distanceKm = distanceText.replace(',', '.').toDoubleOrNull()
-    val seconds = Pace.parseDuration(timeText)
+    val seconds = Pace.parseDigits(timeText)
     val pace = if (distanceKm != null && seconds != null) {
         Pace.secondsPerKm(distanceKm * 1000, seconds)
     } else {
@@ -455,7 +497,7 @@ fun CalculatorCard() {
             }
             if (open) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    PaceField(distanceText, { distanceText = it }, "Distance (km)", Modifier.weight(1f))
+                    PaceField(distanceText, { distanceText = it }, "Distance (km)", Modifier.weight(1f), decimal = true)
                     PaceField(timeText, { timeText = it }, "Durée", Modifier.weight(1f))
                 }
                 Row(verticalAlignment = Alignment.Bottom) {

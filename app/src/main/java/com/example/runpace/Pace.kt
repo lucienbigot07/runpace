@@ -72,6 +72,21 @@ object Pace {
         return if (sec == 0L) "$min minutes pile" else "$min minutes $sec"
     }
 
+    /**
+     * Lit une saisie en chiffres seuls, les deux points étant ajoutés à l'affichage :
+     * "5" -> 5:00, "530" -> 5:30, "5000" -> 50:00, "10530" -> 1:05:30.
+     */
+    fun parseDigits(digits: String): Double? {
+        if (digits.isEmpty() || !digits.all { it.isDigit() }) return null
+        if (digits.length <= 2) return digits.toDouble() * 60
+        val sec = digits.takeLast(2).toDouble()
+        val rest = digits.dropLast(2)
+        val min = rest.takeLast(2).toDouble()
+        val hours = rest.dropLast(2).ifEmpty { "0" }.toDouble()
+        if (sec >= 60) return null
+        return hours * 3600 + min * 60 + sec
+    }
+
     /** Lit une durée "mm", "mm:ss" ou "h:mm:ss" et renvoie des secondes, ou null si invalide. */
     fun parseDuration(text: String): Double? {
         val parts = text.trim().split(":")

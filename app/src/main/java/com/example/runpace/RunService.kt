@@ -158,7 +158,7 @@ class RunService : Service() {
         val text = "Allure ${Pace.format(tracker.currentPace)} /km · " +
             "%.2f km".format(tracker.distanceM / 1000)
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(message ?: "Course en cours")
             .setContentText(text)
             .setOngoing(true)

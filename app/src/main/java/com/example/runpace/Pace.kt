@@ -22,14 +22,43 @@ object Pace {
     fun formatHms(totalSeconds: Long): String =
         "%d:%02d:%02d".format(totalSeconds / 3600, (totalSeconds % 3600) / 60, totalSeconds % 60)
 
-    /** Compare l'allure actuelle à la cible : message à afficher / lire à voix haute. */
-    fun feedback(current: Double?, target: Double, toleranceS: Double = 5.0): String? {
+    /** Plage d'allure : fast = la plus rapide (ex. 5:20), slow = la plus lente (ex. 5:40). */
+    data class Range(val fast: Double, val slow: Double)
+
+    /** Construit une plage à partir de deux allures, dans n'importe quel ordre. */
+    fun range(a: Double?, b: Double?): Range? {
+        if (a == null || b == null) return null
+        return Range(minOf(a, b), maxOf(a, b))
+    }
+
+    /** Message court affiché à l'écran : "Trop lent · 5:52 /km". */
+    fun feedback(current: Double?, range: Range): String? {
         if (current == null) return null
-        return when {
-            current > target + toleranceS -> "Trop lent, accélère"
-            current < target - toleranceS -> "Trop rapide, ralentis"
+        val verdict = when {
+            current > range.slow -> "Trop lent"
+            current < range.fast -> "Trop rapide"
             else -> "Bonne allure"
         }
+        return "$verdict · ${format(current)} /km"
+    }
+
+    /** Phrase lue à voix haute : "Trop lent, 5 minutes 52. Accélère." */
+    fun spoken(current: Double?, range: Range): String? {
+        if (current == null) return null
+        val pace = speak(current)
+        return when {
+            current > range.slow -> "Trop lent, $pace. Accélère."
+            current < range.fast -> "Trop rapide, $pace. Ralentis."
+            else -> "Bonne allure, $pace."
+        }
+    }
+
+    /** 352.0 -> "5 minutes 52" ; 300.0 -> "5 minutes pile". */
+    fun speak(secondsPerKm: Double): String {
+        val total = secondsPerKm.roundToLong()
+        val min = total / 60
+        val sec = total % 60
+        return if (sec == 0L) "$min minutes pile" else "$min minutes $sec"
     }
 
     /** Lit une durée "mm", "mm:ss" ou "h:mm:ss" et renvoie des secondes, ou null si invalide. */

@@ -1,6 +1,7 @@
 package com.example.runpace
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -11,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -103,12 +105,18 @@ fun GpsCard() {
     val tracker = RunState.tracker
     val running = RunState.running
     var elapsedSec by remember { mutableLongStateOf(0L) }
-    var targetText by remember { mutableStateOf("5:30") }
-    val targetSec = Pace.parseDuration(targetText)
-    LaunchedEffect(targetSec) { RunState.targetSec = targetSec }
+    val prefs = remember { context.getSharedPreferences("runpace", Context.MODE_PRIVATE) }
+    var fastText by remember { mutableStateOf(prefs.getString("fast", "5:20") ?: "5:20") }
+    var slowText by remember { mutableStateOf(prefs.getString("slow", "5:40") ?: "5:40") }
+    val range = Pace.range(Pace.parseDuration(fastText), Pace.parseDuration(slowText))
+    // Plage mémorisée et transmise au service, même en pleine course.
+    LaunchedEffect(fastText, slowText) {
+        RunState.range = range
+        prefs.edit().putString("fast", fastText).putString("slow", slowText).apply()
+    }
 
     fun start() {
-        RunState.targetSec = targetSec
+        RunState.range = range
         ContextCompat.startForegroundService(context, Intent(context, RunService::class.java))
     }
 
@@ -141,19 +149,32 @@ fun GpsCard() {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Suivi GPS", style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(
-                value = targetText,
-                onValueChange = { targetText = it },
-                label = { Text("Allure cible (mm:ss /km)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Text("Plage d'allure (min/km)")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = fastText,
+                    onValueChange = { fastText = it },
+                    label = { Text("De (rapide)") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = slowText,
+                    onValueChange = { slowText = it },
+                    label = { Text("À (lent)") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (range == null) {
+                Text("Format attendu : 5:20", color = MaterialTheme.colorScheme.error)
+            }
             Text(
                 "Allure actuelle : ${Pace.format(tracker.currentPace)} /km",
                 style = MaterialTheme.typography.headlineSmall
             )
-            if (running && targetSec != null) {
-                Pace.feedback(tracker.currentPace, targetSec)?.let {
+            if (running && range != null) {
+                Pace.feedback(tracker.currentPace, range)?.let {
                     Text(it, style = MaterialTheme.typography.headlineMedium)
                 }
             }

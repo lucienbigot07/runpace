@@ -32,7 +32,7 @@ import java.util.Locale
 object RunState {
     val tracker = PaceTracker()
     var running by mutableStateOf(false)
-    var targetSec: Double? = null
+    var range: Pace.Range? = null
 }
 
 /**
@@ -59,11 +59,13 @@ class RunService : Service() {
             if (!RunState.running) return
             ticks++
             val tracker = RunState.tracker
-            val target = RunState.targetSec
-            val message = target?.let { Pace.feedback(tracker.currentPace, it) }
+            val range = RunState.range
+            val message = range?.let { Pace.feedback(tracker.currentPace, it) }
             if (ticks % 5 == 0) notify(buildNotification(message))
-            if (ticks % ANNOUNCE_EVERY_S == 0 && message != null) {
-                tts.speak(message, TextToSpeech.QUEUE_FLUSH, null, "pace")
+            if (ticks % ANNOUNCE_EVERY_S == 0) {
+                range?.let { Pace.spoken(tracker.currentPace, it) }?.let {
+                    tts.speak(it, TextToSpeech.QUEUE_FLUSH, null, "pace")
+                }
             }
             handler.postDelayed(this, 1000)
         }

@@ -31,6 +31,17 @@ object Pace {
         return Range(minOf(a, b), maxOf(a, b))
     }
 
+    enum class Status { FAST, OK, SLOW }
+
+    fun status(current: Double?, range: Range?): Status? {
+        if (current == null || range == null) return null
+        return when {
+            current > range.slow -> Status.SLOW
+            current < range.fast -> Status.FAST
+            else -> Status.OK
+        }
+    }
+
     /** Message court affiché à l'écran : "Trop lent · 5:52 /km". */
     fun feedback(current: Double?, range: Range): String? {
         if (current == null) return null

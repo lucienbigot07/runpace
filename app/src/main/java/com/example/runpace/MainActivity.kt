@@ -1,10 +1,10 @@
 package com.example.runpace
 
 import android.Manifest
-import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
-import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -23,26 +23,17 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import android.speech.tts.TextToSpeech
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.google.android.gms.location.LocationCallback
-import com.google.android.gms.location.LocationRequest
-import com.google.android.gms.location.LocationResult
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
 import kotlinx.coroutines.delay
-import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,83 +96,46 @@ fun CalculatorCard() {
     }
 }
 
-/** Suivi GPS en temps réel : allure actuelle, moyenne, distance et temps. */
-@SuppressLint("MissingPermission")
+/** Suivi GPS : l'écran pilote RunService, qui continue même téléphone verrouillé. */
 @Composable
 fun GpsCard() {
     val context = LocalContext.current
-    val client = remember { LocationServices.getFusedLocationProviderClient(context) }
-    val tracker = remember { PaceTracker() }
-    var running by remember { mutableStateOf(false) }
+    val tracker = RunState.tracker
+    val running = RunState.running
     var elapsedSec by remember { mutableLongStateOf(0L) }
     var targetText by remember { mutableStateOf("5:30") }
     val targetSec = Pace.parseDuration(targetText)
-    val targetState = rememberUpdatedState(targetSec)
-
-    // Synthèse vocale en français : annonce l'allure toutes les 15 s pendant la course.
-    val tts = remember {
-        lateinit var engine: TextToSpeech
-        engine = TextToSpeech(context) { status ->
-            if (status == TextToSpeech.SUCCESS) engine.language = Locale.FRENCH
-        }
-        engine
-    }
-    DisposableEffect(Unit) {
-        onDispose { tts.shutdown() }
-    }
-
-    val callback = remember {
-        object : LocationCallback() {
-            override fun onLocationResult(result: LocationResult) {
-                result.locations.forEach { tracker.onLocation(it) }
-            }
-        }
-    }
+    LaunchedEffect(targetSec) { RunState.targetSec = targetSec }
 
     fun start() {
-        tracker.reset()
-        elapsedSec = 0L
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
-            .setMinUpdateIntervalMillis(500L)
-            .build()
-        client.requestLocationUpdates(request, callback, Looper.getMainLooper())
-        running = true
+        RunState.targetSec = targetSec
+        ContextCompat.startForegroundService(context, Intent(context, RunService::class.java))
     }
 
     fun stop() {
-        client.removeLocationUpdates(callback)
-        running = false
+        context.startService(
+            Intent(context, RunService::class.java).setAction(RunService.ACTION_STOP)
+        )
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        if (results.values.any { it }) start()
+        if (results[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            results[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        ) start()
     }
 
-    // Met à jour le temps écoulé une fois par seconde pendant la course.
+    // Temps écoulé, rafraîchi chaque seconde.
     LaunchedEffect(running) {
-        var ticks = 0
         while (running) {
             elapsedSec = if (tracker.startMs > 0) {
                 (System.currentTimeMillis() - tracker.startMs) / 1000
             } else {
                 0L
             }
-            ticks++
-            val target = targetState.value
-            if (ticks % 15 == 0 && target != null) {
-                Pace.feedback(tracker.currentPace, target)?.let {
-                    tts.speak(it, TextToSpeech.QUEUE_FLUSH, null, null)
-                }
-            }
             delay(1000)
         }
-    }
-
-    // Arrête les mises à jour GPS si l'écran disparaît.
-    DisposableEffect(Unit) {
-        onDispose { client.removeLocationUpdates(callback) }
     }
 
     Card(Modifier.fillMaxWidth()) {
@@ -206,6 +160,12 @@ fun GpsCard() {
             Text("Allure moyenne : ${Pace.format(tracker.averagePace)} /km")
             Text("Distance : ${"%.2f".format(tracker.distanceM / 1000)} km")
             Text("Temps : ${Pace.formatHms(elapsedSec)}")
+            if (running) {
+                Text(
+                    "Vous pouvez verrouiller le téléphone, le suivi continue.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
             Button(onClick = {
                 if (running) {
                     stop()
@@ -213,15 +173,21 @@ fun GpsCard() {
                     val granted = ContextCompat.checkSelfPermission(
                         context, Manifest.permission.ACCESS_FINE_LOCATION
                     ) == PackageManager.PERMISSION_GRANTED
-                    if (granted) {
+                    val needNotif = Build.VERSION.SDK_INT >= 33 &&
+                        ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.POST_NOTIFICATIONS
+                        ) != PackageManager.PERMISSION_GRANTED
+                    if (granted && !needNotif) {
                         start()
                     } else {
-                        permissionLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.ACCESS_FINE_LOCATION,
-                                Manifest.permission.ACCESS_COARSE_LOCATION
-                            )
+                        val perms = mutableListOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
                         )
+                        if (Build.VERSION.SDK_INT >= 33) {
+                            perms += Manifest.permission.POST_NOTIFICATIONS
+                        }
+                        permissionLauncher.launch(perms.toTypedArray())
                     }
                 }
             }) {
